@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
 
 from .device_sources import BaseFrameSource, FramePacket, open_best_source
 from .hand_tracking import HandTracker, TrackingResult
+from .mouse_control import AirMouseState, WindowsAirMouseController
 
 
 def get_app_root() -> Path:
@@ -60,6 +61,15 @@ class HandViewerWindow(QMainWindow):
         self._sdk_root = sdk_root
         self._source: BaseFrameSource = open_best_source(sdk_root)
         self._tracker = HandTracker()
+        self._air_mouse = WindowsAirMouseController()
+        self._air_mouse_state = AirMouseState(
+            enabled=self._air_mouse.enabled,
+            controlling=False,
+            hand_label="",
+            cursor_position=None,
+            primary_gesture="Move",
+            status_text="Show one hand to control the cursor.",
+        )
         self._last_packet_timestamp = 0.0
         self._pending_log_messages: list[str] = []
         self._session_log_messages: list[str] = []
@@ -81,6 +91,7 @@ class HandViewerWindow(QMainWindow):
         self._timer.stop()
         self._log_timer.stop()
         self._tracker.close()
+        self._air_mouse.set_enabled(False)
         self._source.stop()
         super().closeEvent(event)
 
@@ -119,8 +130,11 @@ class HandViewerWindow(QMainWindow):
         self.copy_logs_button.clicked.connect(self._copy_logs)
         self.clear_logs_button = QPushButton("Clear logs")
         self.clear_logs_button.clicked.connect(self._clear_logs)
+        self.air_mouse_button = QPushButton()
+        self.air_mouse_button.clicked.connect(self._toggle_air_mouse)
         button_row.addWidget(self.reconnect_button)
         button_row.addWidget(self.reset_pose_button)
+        button_row.addWidget(self.air_mouse_button)
         button_row.addWidget(self.copy_logs_button)
         button_row.addWidget(self.clear_logs_button)
 
@@ -133,12 +147,14 @@ class HandViewerWindow(QMainWindow):
         self.hands_card = StatCard("Hands")
         self.pose_card = StatCard("Pose")
         self.imu_card = StatCard("IMU")
+        self.input_card = StatCard("Air Mouse")
         stat_grid.addWidget(self.source_card, 0, 0)
         stat_grid.addWidget(self.model_card, 0, 1)
         stat_grid.addWidget(self.fps_card, 1, 0)
         stat_grid.addWidget(self.hands_card, 1, 1)
         stat_grid.addWidget(self.pose_card, 2, 0)
         stat_grid.addWidget(self.imu_card, 2, 1)
+        stat_grid.addWidget(self.input_card, 3, 0, 1, 2)
 
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
@@ -159,6 +175,7 @@ class HandViewerWindow(QMainWindow):
         root_layout.addWidget(right_panel, 0)
         self.setCentralWidget(root)
         self._apply_styles()
+        self._sync_air_mouse_button()
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
@@ -241,6 +258,11 @@ class HandViewerWindow(QMainWindow):
         self._source.reset_pose()
         self._flush_logs()
 
+    def _toggle_air_mouse(self) -> None:
+        self._air_mouse.set_enabled(not self._air_mouse.enabled)
+        self._sync_air_mouse_button()
+        self._flush_logs()
+
     def _refresh(self) -> None:
         packet = self._source.get_latest_packet()
         if packet is None:
@@ -250,12 +272,15 @@ class HandViewerWindow(QMainWindow):
 
         self._last_packet_timestamp = packet.timestamp
         tracking = self._tracker.process(packet.frame_bgr)
-        decorated = self._decorate_frame(packet, tracking)
+        self._air_mouse_state = self._air_mouse.update(tracking)
+        decorated = self._decorate_frame(packet, tracking, self._air_mouse_state)
         self._present_frame(decorated)
         self._update_stats(packet, tracking)
+        self._flush_logs()
 
     def _flush_logs(self) -> None:
         messages = self._source.drain_logs()
+        messages.extend(self._air_mouse.drain_logs())
         if messages:
             self._append_session_logs(messages)
             self._pending_log_messages.extend(messages)
@@ -292,6 +317,9 @@ class HandViewerWindow(QMainWindow):
             pass
         self.log_status.setText("Logs cleared.")
 
+    def _sync_air_mouse_button(self) -> None:
+        self.air_mouse_button.setText("Air mouse on" if self._air_mouse.enabled else "Air mouse off")
+
     def _build_log_file_path(self) -> Path:
         local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
         log_dir = local_app_data / "LumaUltraHandViewer" / "logs"
@@ -313,7 +341,12 @@ class HandViewerWindow(QMainWindow):
             f"{len(self._session_log_messages)} log lines this session. Copy logs grabs the full session."
         )
 
-    def _decorate_frame(self, packet: FramePacket, tracking: TrackingResult) -> np.ndarray:
+    def _decorate_frame(
+        self,
+        packet: FramePacket,
+        tracking: TrackingResult,
+        air_mouse_state: AirMouseState,
+    ) -> np.ndarray:
         frame = tracking.frame_bgr.copy()
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, 0), (frame.shape[1], 106), (10, 18, 25), -1)
@@ -363,6 +396,20 @@ class HandViewerWindow(QMainWindow):
                 2,
                 cv2.LINE_AA,
             )
+
+        cursor_text = f"Air mouse: {air_mouse_state.primary_gesture}"
+        if air_mouse_state.hand_label:
+            cursor_text += f" with {air_mouse_state.hand_label} hand"
+        cv2.putText(
+            frame,
+            cursor_text,
+            (24, footer_y - 64),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (139, 205, 255) if air_mouse_state.enabled else (145, 145, 145),
+            2,
+            cv2.LINE_AA,
+        )
         return frame
 
     def _describe_hands(self, tracking: TrackingResult) -> str:
@@ -387,6 +434,11 @@ class HandViewerWindow(QMainWindow):
         self.model_card.set_value(packet.market_name)
         self.fps_card.set_value(f"{tracking.fps:0.1f}")
         self.hands_card.set_value(str(len(tracking.hands)))
+        self.input_card.set_value(
+            self._air_mouse_state.primary_gesture
+            if self._air_mouse_state.enabled
+            else "Disabled"
+        )
 
         if packet.pose is None:
             self.pose_card.set_value("No pose")

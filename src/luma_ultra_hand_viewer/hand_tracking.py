@@ -17,6 +17,10 @@ class TrackedHand:
     label: str
     score: float
     pinch_distance_px: float
+    pinch_ratio: float
+    middle_pinch_ratio: float
+    index_tip_px: tuple[int, int]
+    index_tip_norm: tuple[float, float]
 
 
 @dataclass(slots=True)
@@ -72,12 +76,14 @@ class HandTracker:
                     handedness = category.category_name or category.display_name or "Unknown"
                     score = float(category.score)
 
-                pinch_distance = self._draw_hand(annotated, hand_landmarks, image_width, image_height)
                 hands.append(
-                    TrackedHand(
-                        label=handedness,
-                        score=score,
-                        pinch_distance_px=pinch_distance,
+                    self._draw_hand(
+                        annotated,
+                        hand_landmarks,
+                        image_width,
+                        image_height,
+                        handedness,
+                        score,
                     )
                 )
 
@@ -111,12 +117,16 @@ class HandTracker:
         hand_landmarks: list,
         image_width: int,
         image_height: int,
-    ) -> float:
+        handedness: str,
+        score: float,
+    ) -> TrackedHand:
         points: list[tuple[int, int]] = []
+        normalized_points: list[tuple[float, float]] = []
         for landmark in hand_landmarks:
             x = min(max(int(landmark.x * image_width), 0), image_width - 1)
             y = min(max(int(landmark.y * image_height), 0), image_height - 1)
             points.append((x, y))
+            normalized_points.append((float(landmark.x), float(landmark.y)))
 
         for connection in self._connections:
             start = points[connection.start]
@@ -130,7 +140,32 @@ class HandTracker:
 
         thumb_tip = np.array(points[4], dtype=np.float32)
         index_tip = np.array(points[8], dtype=np.float32)
+        middle_tip = np.array(points[12], dtype=np.float32)
+        palm_span = float(
+            np.linalg.norm(np.array(points[5], dtype=np.float32) - np.array(points[17], dtype=np.float32))
+        )
+        palm_span = max(palm_span, 1.0)
         pinch_distance = float(np.linalg.norm(thumb_tip - index_tip))
+        pinch_ratio = pinch_distance / palm_span
+        middle_pinch_ratio = float(np.linalg.norm(thumb_tip - middle_tip)) / palm_span
         pinch_center = tuple(np.round((thumb_tip + index_tip) * 0.5).astype(int))
         cv2.circle(frame_bgr, pinch_center, 10, (255, 255, 255), 1, cv2.LINE_AA)
-        return pinch_distance
+        cv2.putText(
+            frame_bgr,
+            f"{handedness} {score * 100:.0f}%",
+            (points[0][0] + 10, max(28, points[0][1] - 12)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.52,
+            (240, 248, 255),
+            2,
+            cv2.LINE_AA,
+        )
+        return TrackedHand(
+            label=handedness,
+            score=score,
+            pinch_distance_px=pinch_distance,
+            pinch_ratio=pinch_ratio,
+            middle_pinch_ratio=middle_pinch_ratio,
+            index_tip_px=points[8],
+            index_tip_norm=normalized_points[8],
+        )
