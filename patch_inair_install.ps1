@@ -2,24 +2,36 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = $PSScriptRoot
 $inairRoot = "C:\Program Files\INAIR Space"
-$coreProject = Join-Path $repoRoot "artifacts\inair-decomp\core\inair.api.core.csproj"
-$dfuProject = Join-Path $repoRoot "artifacts\inair-decomp\dfu\inair.api.dfu.csproj"
-$coreBuild = Join-Path $repoRoot "artifacts\inair-decomp\core\bin\Release\net48\inair.api.core.dll"
-$dfuBuild = Join-Path $repoRoot "artifacts\inair-decomp\dfu\bin\Release\net48\inair.api.dfu.dll"
+$patchDir = Join-Path $repoRoot "vendor\inair\patches"
+$patchFiles = @(
+    "inair.api.core.dll",
+    "inair.api.dfu.dll",
+    "inair.api.pipeserver.dll",
+    "LumaUltra.InairPatchSupport.dll"
+)
+$backupFiles = @(
+    "inair.api.core.dll",
+    "inair.api.dfu.dll",
+    "inair.api.pipeserver.dll"
+)
 $backupRoot = Join-Path $repoRoot "artifacts\inair-installed-backup"
 $backupDir = Join-Path $backupRoot (Get-Date -Format "yyyyMMdd-HHmmss")
 
-Get-Process | Where-Object { $_.ProcessName -eq "INAIR Space" } | Stop-Process -Force
+$running = Get-Process -Name "INAIR Space" -ErrorAction SilentlyContinue
+if ($running) {
+    $running | Stop-Process -Force
+}
 
-dotnet build $coreProject -c Release --source https://api.nuget.org/v3/index.json
-dotnet build $dfuProject -c Release --source https://api.nuget.org/v3/index.json
+& (Join-Path $repoRoot "build_inair_patch_assets.ps1")
 
 New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
-Copy-Item (Join-Path $inairRoot "inair.api.core.dll") (Join-Path $backupDir "inair.api.core.dll")
-Copy-Item (Join-Path $inairRoot "inair.api.dfu.dll") (Join-Path $backupDir "inair.api.dfu.dll")
+foreach ($file in $backupFiles) {
+    Copy-Item (Join-Path $inairRoot $file) (Join-Path $backupDir $file)
+}
 
-Copy-Item $coreBuild (Join-Path $inairRoot "inair.api.core.dll") -Force
-Copy-Item $dfuBuild (Join-Path $inairRoot "inair.api.dfu.dll") -Force
+foreach ($file in $patchFiles) {
+    Copy-Item (Join-Path $patchDir $file) (Join-Path $inairRoot $file) -Force
+}
 
 Write-Host ""
 Write-Host "Patched INAIR install for VITURE compatibility." -ForegroundColor Green

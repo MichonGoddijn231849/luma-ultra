@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>LumaUltra.InairPatchSupport</AssemblyName>
+    <RootNamespace>LumaUltra.InairPatchSupport</RootNamespace>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="inair.api.pipeclient">
+      <HintPath>C:\Program Files\INAIR Space\inair.api.pipeclient.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+  </ItemGroup>
+</Project>

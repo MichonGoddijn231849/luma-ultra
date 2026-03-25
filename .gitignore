@@ -6,6 +6,8 @@
 /installer-output/
 /github-artifact/
 LumaUltraHandViewer.spec
+tools/inair-patch-support/bin/
+tools/inair-patch-support/obj/
 __pycache__/
 *.pyc
 *.pyo

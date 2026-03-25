@@ -4,6 +4,7 @@ import ctypes
 import hashlib
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -12,7 +13,17 @@ from pathlib import Path
 
 INAIR_ROOT = Path(r"C:\Program Files\INAIR Space")
 INAIR_EXE = INAIR_ROOT / "INAIR Space.exe"
-PATCH_FILE_NAMES = ("inair.api.core.dll", "inair.api.dfu.dll")
+PATCH_FILE_NAMES = (
+    "inair.api.core.dll",
+    "inair.api.dfu.dll",
+    "inair.api.pipeserver.dll",
+    "LumaUltra.InairPatchSupport.dll",
+)
+BACKUP_FILE_NAMES = (
+    "inair.api.core.dll",
+    "inair.api.dfu.dll",
+    "inair.api.pipeserver.dll",
+)
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
@@ -50,13 +61,14 @@ def patch_assets_present(app_root: Path | None = None) -> bool:
 
 
 def inair_install_present() -> bool:
-    return INAIR_EXE.exists() and all((INAIR_ROOT / name).exists() for name in PATCH_FILE_NAMES)
+    return INAIR_EXE.exists() and all((INAIR_ROOT / name).exists() for name in BACKUP_FILE_NAMES)
 
 
 def launch_inair() -> tuple[bool, str]:
     if not INAIR_EXE.exists():
         return False, f"INAIR Space was not found at {INAIR_EXE}"
 
+    ensure_inair_state_db()
     subprocess.Popen([str(INAIR_EXE)], cwd=str(INAIR_ROOT))
     return True, f"Launched {INAIR_EXE}"
 
@@ -69,12 +81,14 @@ def patch_inair_install(app_root: Path | None = None) -> tuple[bool, str]:
         return False, "Bundled INAIR patch files are missing from this app package."
 
     stop_running_inair()
+    ensure_inair_state_db()
     patch_dir = get_patch_asset_dir(app_root)
     backup_dir = get_backup_root() / time.strftime("%Y%m%d-%H%M%S")
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    for file_name in PATCH_FILE_NAMES:
+    for file_name in BACKUP_FILE_NAMES:
         shutil.copy2(INAIR_ROOT / file_name, backup_dir / file_name)
+    for file_name in PATCH_FILE_NAMES:
         shutil.copy2(patch_dir / file_name, INAIR_ROOT / file_name)
 
     return True, f"Patched INAIR Space and saved a backup to {backup_dir}"
@@ -87,9 +101,12 @@ def restore_inair_install() -> tuple[bool, str]:
     stop_running_inair()
     backups = sorted(get_backup_root().glob("*"), reverse=True)
     for candidate in backups:
-        if all((candidate / name).exists() for name in PATCH_FILE_NAMES):
-            for file_name in PATCH_FILE_NAMES:
+        if all((candidate / name).exists() for name in BACKUP_FILE_NAMES):
+            for file_name in BACKUP_FILE_NAMES:
                 shutil.copy2(candidate / file_name, INAIR_ROOT / file_name)
+            helper_path = INAIR_ROOT / "LumaUltra.InairPatchSupport.dll"
+            if helper_path.exists():
+                helper_path.unlink()
             return True, f"Restored INAIR Space from backup {candidate}"
 
     return False, "No INAIR backup set was found to restore."
@@ -111,10 +128,16 @@ def describe_inair_status(app_root: Path | None = None) -> str:
 
     latest_backup = get_latest_backup_dir()
     lines.append(f"Latest backup: {latest_backup if latest_backup else 'None'}")
+    lines.append(f"State DB: {get_inair_state_db_path()}")
+    lines.append(f"State DB status: {describe_inair_state_db()}")
 
     last_action = read_last_action_status()
     if last_action:
         lines.extend(["", "Last action:", last_action])
+
+    log_tail = read_inair_log_tail()
+    if log_tail:
+        lines.extend(["", "Latest INAIR log lines:", log_tail])
 
     return "\n".join(lines)
 
@@ -140,7 +163,7 @@ def get_patch_state(app_root: Path | None = None) -> str:
 def get_latest_backup_dir() -> Path | None:
     backups = sorted(get_backup_root().glob("*"), reverse=True)
     for candidate in backups:
-        if all((candidate / name).exists() for name in PATCH_FILE_NAMES):
+        if all((candidate / name).exists() for name in BACKUP_FILE_NAMES):
             return candidate
     return None
 
@@ -216,3 +239,103 @@ def stop_running_inair() -> None:
         check=False,
         creationflags=_CREATE_NO_WINDOW,
     )
+
+
+def get_inair_state_db_path() -> Path:
+    local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return local_app_data / "INAIR" / "WiredModeInfo.db"
+
+
+def ensure_inair_state_db() -> None:
+    db_path = get_inair_state_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with sqlite3.connect(db_path) as connection:
+        cursor = connection.cursor()
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS MonitorLayout (
+                ModeID INTEGER PRIMARY KEY NOT NULL,
+                ModeName TEXT UNIQUE NOT NULL,
+                Volume INTEGER DEFAULT 50,
+                Distance INTEGER DEFAULT 60,
+                IsPrivacy INTEGER DEFAULT 0,
+                IsDefault INTEGER DEFAULT 0,
+                IsAutoAdjust INTEGER DEFAULT 0,
+                IsVision INTEGER DEFAULT 0
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_default_mode ON MonitorLayout(IsDefault) WHERE IsDefault = 1"
+        )
+        cursor.executemany(
+            """
+            INSERT OR IGNORE INTO MonitorLayout
+                (ModeID, ModeName, Volume, Distance, IsPrivacy, IsDefault, IsAutoAdjust, IsVision)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                (1, "Ultra-wide", 50, 60, 0, 0, 0, 0),
+                (2, "Dual", 50, 60, 0, 0, 0, 0),
+                (3, "Triple", 50, 60, 0, 1, 0, 0),
+                (4, "Quad", 50, 60, 0, 0, 0, 0),
+            ),
+        )
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS GlobalMode (
+                Name TEXT PRIMARY KEY NOT NULL,
+                Value INTEGER DEFAULT 0
+            )
+            """
+        )
+        cursor.executemany(
+            "INSERT OR IGNORE INTO GlobalMode (Name, Value) VALUES (?, ?)",
+            (("IsAutoAdjust", 1), ("IsPrivacy", 0), ("IsOverease", 0)),
+        )
+        cursor.execute("SELECT COUNT(*) FROM MonitorLayout WHERE IsDefault = 1")
+        default_count = int(cursor.fetchone()[0] or 0)
+        if default_count == 0:
+            cursor.execute("UPDATE MonitorLayout SET IsDefault = 0")
+            cursor.execute("UPDATE MonitorLayout SET IsDefault = 1 WHERE ModeID = 3")
+        connection.commit()
+
+
+def describe_inair_state_db() -> str:
+    db_path = get_inair_state_db_path()
+    if not db_path.exists():
+        return "missing"
+
+    try:
+        with sqlite3.connect(db_path) as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT COUNT(*) FROM MonitorLayout")
+            monitor_rows = int(cursor.fetchone()[0] or 0)
+            cursor.execute("SELECT COUNT(*) FROM GlobalMode")
+            global_rows = int(cursor.fetchone()[0] or 0)
+            cursor.execute("SELECT ModeID FROM MonitorLayout WHERE IsDefault = 1 LIMIT 1")
+            row = cursor.fetchone()
+    except sqlite3.Error as exc:
+        return f"error: {exc}"
+
+    default_mode = row[0] if row else "none"
+    return f"{monitor_rows} monitor rows, {global_rows} global rows, default mode {default_mode}"
+
+
+def get_inair_log_path() -> Path:
+    local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    return local_app_data / "inair" / "logs" / "app.log"
+
+
+def read_inair_log_tail(max_lines: int = 12) -> str:
+    log_path = get_inair_log_path()
+    if not log_path.exists():
+        return ""
+
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+
+    return "\n".join(lines[-max_lines:])
