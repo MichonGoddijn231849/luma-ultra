@@ -1,0 +1,16 @@
+.venv/
+/\.pyinstaller-build/
+/build/
+/dist/
+/release/
+/installer-output/
+LumaUltraHandViewer.spec
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+Thumbs.db
+Desktop.ini
+VITURE_XR_Glasses_SDK_for_Windows_x86_64/.cache/

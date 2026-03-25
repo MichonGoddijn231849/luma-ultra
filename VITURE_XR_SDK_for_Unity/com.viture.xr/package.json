@@ -1,0 +1,42 @@
+{
+  "name": "com.viture.xr",
+  "displayName": "VITURE XR Plugin",
+  "version": "0.7.0",
+  "unity": "6000.0",
+  "description": "Unity XR plugin for VITURE devices.",
+  "keywords": [
+    "viture",
+    "xr",
+    "ar",
+    "xreditorsubsystem"
+  ],
+  "dependencies": {
+    "com.unity.xr.management": "4.5.1",
+    "com.unity.xr.hands": "1.5.1",
+    "com.unity.xr.interaction.toolkit": "3.0.5"
+  },
+  "documentationUrl": "https://www.viture.com/developer/unity-sdk/unity#overview",
+  "samples": [
+    {
+      "displayName": "Starter Assets",
+      "description": "Pre-configured XR Origin prefab and input actions for VITURE hand tracking. Sets up basic hand interaction with XR Interaction Toolkit.\n<i>Dependencies:</i>\n \u2022 <a href=\"com.unity3d.kharma:upmpackage/com.unity.shadergraph\">Shader Graph</a>",
+      "path": "Samples~/Starter Assets"
+    },
+    {
+      "displayName": "Interaction Simulator",
+      "description": "Editor-only HMD and hand interaction simulator. Provides a pre-configured prefab for testing hand tracking in Play mode without a device.\n<i>Dependencies:</i>\n \u2022 Starter Assets sample",
+      "path": "Samples~/Interaction Simulator"
+    },
+    {
+      "displayName": "Marker Tracking Demo",
+      "description": "Demonstrates how to track multiple markers and visualize them with 3D objects.\n<i>Dependencies:</i>\n \u2022 Starter Assets sample",
+      "path": "Samples~/Marker Tracking Demo"
+    },
+    {
+      "displayName": "RGB Camera Demo",
+      "description": "Demonstrates RGB Camera API: display live camera feed, capture frames, and change resolution. Requires VITURE Luma Pro, Luma Ultra, or Beast glasses with built-in RGB camera.\n<i>Dependencies:</i>\n \u2022 Starter Assets sample",
+      "path": "Samples~/RGB Camera Demo"
+    }
+  ],
+  "unityRelease": "27f1"
+}
