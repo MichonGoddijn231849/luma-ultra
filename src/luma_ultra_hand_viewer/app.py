@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import sys
+import time
 from pathlib import Path
 
 import cv2
@@ -59,6 +61,9 @@ class HandViewerWindow(QMainWindow):
         self._source: BaseFrameSource = open_best_source(sdk_root)
         self._tracker = HandTracker()
         self._last_packet_timestamp = 0.0
+        self._pending_log_messages: list[str] = []
+        self._session_log_messages: list[str] = []
+        self._log_file_path = self._build_log_file_path()
 
         self.setWindowTitle("Luma Ultra Hand Viewer")
         self.resize(1560, 920)
@@ -68,9 +73,13 @@ class HandViewerWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(33)
+        self._log_timer = QTimer(self)
+        self._log_timer.timeout.connect(self._flush_logs)
+        self._log_timer.start(250)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._timer.stop()
+        self._log_timer.stop()
         self._tracker.close()
         self._source.stop()
         super().closeEvent(event)
@@ -106,8 +115,14 @@ class HandViewerWindow(QMainWindow):
         self.reconnect_button.clicked.connect(self._reconnect_source)
         self.reset_pose_button = QPushButton("Reset pose")
         self.reset_pose_button.clicked.connect(self._reset_pose)
+        self.copy_logs_button = QPushButton("Copy logs")
+        self.copy_logs_button.clicked.connect(self._copy_logs)
+        self.clear_logs_button = QPushButton("Clear logs")
+        self.clear_logs_button.clicked.connect(self._clear_logs)
         button_row.addWidget(self.reconnect_button)
         button_row.addWidget(self.reset_pose_button)
+        button_row.addWidget(self.copy_logs_button)
+        button_row.addWidget(self.clear_logs_button)
 
         stat_grid = QGridLayout()
         stat_grid.setHorizontalSpacing(12)
@@ -129,11 +144,15 @@ class HandViewerWindow(QMainWindow):
         self.log_output.setReadOnly(True)
         self.log_output.setMinimumHeight(260)
         self.log_output.setObjectName("LogPane")
+        self.log_output.document().setMaximumBlockCount(300)
+        self.log_status = QLabel("Logs are throttled and can be copied in one click.")
+        self.log_status.setObjectName("LogStatus")
 
         right_layout.addWidget(header)
         right_layout.addWidget(subheader)
         right_layout.addLayout(button_row)
         right_layout.addLayout(stat_grid)
+        right_layout.addWidget(self.log_status)
         right_layout.addWidget(self.log_output, 1)
 
         root_layout.addWidget(self.video_label, 1)
@@ -207,6 +226,9 @@ class HandViewerWindow(QMainWindow):
                 padding: 12px;
                 color: #c9d4db;
             }
+            #LogStatus {
+                color: #91a7b3;
+            }
             """
         )
 
@@ -220,7 +242,6 @@ class HandViewerWindow(QMainWindow):
         self._flush_logs()
 
     def _refresh(self) -> None:
-        self._flush_logs()
         packet = self._source.get_latest_packet()
         if packet is None:
             return
@@ -234,9 +255,63 @@ class HandViewerWindow(QMainWindow):
         self._update_stats(packet, tracking)
 
     def _flush_logs(self) -> None:
-        for message in self._source.drain_logs():
-            self.log_output.appendPlainText(message)
-        self.log_output.verticalScrollBar().setValue(self.log_output.verticalScrollBar().maximum())
+        messages = self._source.drain_logs()
+        if messages:
+            self._append_session_logs(messages)
+            self._pending_log_messages.extend(messages)
+
+        if not self._pending_log_messages:
+            return
+
+        scroll_bar = self.log_output.verticalScrollBar()
+        should_follow = scroll_bar.value() >= scroll_bar.maximum() - 4
+        self.log_output.appendPlainText("\n".join(self._pending_log_messages))
+        self._pending_log_messages.clear()
+        if should_follow:
+            scroll_bar.setValue(scroll_bar.maximum())
+        self._update_log_status()
+
+    def _copy_logs(self) -> None:
+        text = "\n".join(self._session_log_messages).strip()
+        if not text:
+            self.log_status.setText("No logs yet.")
+            return
+
+        QApplication.clipboard().setText(text)
+        self.log_status.setText(
+            f"Copied {len(self._session_log_messages)} log lines from this session."
+        )
+
+    def _clear_logs(self) -> None:
+        self._pending_log_messages.clear()
+        self._session_log_messages.clear()
+        self.log_output.clear()
+        try:
+            self._log_file_path.write_text("", encoding="utf-8")
+        except OSError:
+            pass
+        self.log_status.setText("Logs cleared.")
+
+    def _build_log_file_path(self) -> Path:
+        local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        log_dir = local_app_data / "LumaUltraHandViewer" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        session_stamp = time.strftime("%Y%m%d-%H%M%S")
+        return log_dir / f"session-{session_stamp}.log"
+
+    def _append_session_logs(self, messages: list[str]) -> None:
+        self._session_log_messages.extend(messages)
+        try:
+            with self._log_file_path.open("a", encoding="utf-8") as handle:
+                handle.write("\n".join(messages))
+                handle.write("\n")
+        except OSError:
+            return
+
+    def _update_log_status(self) -> None:
+        self.log_status.setText(
+            f"{len(self._session_log_messages)} log lines this session. Copy logs grabs the full session."
+        )
 
     def _decorate_frame(self, packet: FramePacket, tracking: TrackingResult) -> np.ndarray:
         frame = tracking.frame_bgr.copy()

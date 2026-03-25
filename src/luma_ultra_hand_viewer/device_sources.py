@@ -39,8 +39,11 @@ class BaseFrameSource:
     def __init__(self) -> None:
         self._latest_packet: Optional[FramePacket] = None
         self._packet_lock = threading.Lock()
-        self._logs: deque[str] = deque(maxlen=200)
+        self._logs: deque[str] = deque(maxlen=1000)
         self._running = False
+        self._last_log_body: Optional[str] = None
+        self._last_log_prefix: Optional[str] = None
+        self._repeat_count = 0
 
     @property
     def is_running(self) -> bool:
@@ -48,12 +51,32 @@ class BaseFrameSource:
 
     def log(self, message: str) -> None:
         timestamp = time.strftime("%H:%M:%S")
-        self._logs.append(f"[{timestamp}] {message}")
+        prefix = f"[{timestamp}]"
+        if message == self._last_log_body:
+            self._repeat_count += 1
+            self._last_log_prefix = prefix
+            return
+
+        self._flush_repeated_log()
+        self._logs.append(f"{prefix} {message}")
+        self._last_log_body = message
+        self._last_log_prefix = prefix
 
     def drain_logs(self) -> list[str]:
+        self._flush_repeated_log()
         messages = list(self._logs)
         self._logs.clear()
         return messages
+
+    def _flush_repeated_log(self) -> None:
+        if self._repeat_count <= 0 or self._last_log_prefix is None:
+            return
+
+        suffix = "time" if self._repeat_count == 1 else "times"
+        self._logs.append(
+            f"{self._last_log_prefix} Previous message repeated {self._repeat_count} more {suffix}."
+        )
+        self._repeat_count = 0
 
     def get_latest_packet(self) -> Optional[FramePacket]:
         with self._packet_lock:
@@ -168,7 +191,7 @@ class VitureCarinaSource(BaseFrameSource):
                 return False
 
             self._market_name = self._get_market_name(product_id)
-            self._library.xr_device_provider_set_log_level(2)
+            self._library.xr_device_provider_set_log_level(1)
             self._register_callbacks()
 
             init_result = self._library.xr_device_provider_initialize(
