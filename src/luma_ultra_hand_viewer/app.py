@@ -18,8 +18,9 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QPlainTextEdit,
-    QScrollArea,
+    QSplitter,
     QSizePolicy,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -118,18 +119,21 @@ class HandViewerWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         root = QWidget()
-        root_layout = QHBoxLayout(root)
+        root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(24, 24, 24, 24)
-        root_layout.setSpacing(24)
+        root_layout.setSpacing(16)
 
         self.video_label = QLabel("Waiting for a video source...")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(420, 260)
+        self.video_label.setMinimumSize(320, 220)
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.video_label.setObjectName("VideoSurface")
 
-        right_panel_content = QWidget()
-        right_layout = QVBoxLayout(right_panel_content)
+        sidebar = QWidget()
+        sidebar.setObjectName("Sidebar")
+        sidebar.setMinimumWidth(300)
+        sidebar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        right_layout = QVBoxLayout(sidebar)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(18)
 
@@ -204,34 +208,55 @@ class HandViewerWindow(QMainWindow):
         self.log_status.setObjectName("LogStatus")
         self.device_info_output = QPlainTextEdit()
         self.device_info_output.setReadOnly(True)
-        self.device_info_output.setMinimumHeight(220)
+        self.device_info_output.setMinimumHeight(180)
         self.device_info_output.setObjectName("LogPane")
         self.device_info_status = QLabel("Device info updates automatically every few seconds.")
         self.device_info_status.setObjectName("LogStatus")
 
+        status_tab = QWidget()
+        status_layout = QVBoxLayout(status_tab)
+        status_layout.setContentsMargins(0, 0, 0, 0)
+        status_layout.setSpacing(18)
+        status_layout.addLayout(button_grid)
+        status_layout.addLayout(stat_grid)
+        status_layout.addStretch(1)
+
+        logs_tab = QWidget()
+        logs_layout = QVBoxLayout(logs_tab)
+        logs_layout.setContentsMargins(0, 0, 0, 0)
+        logs_layout.setSpacing(12)
+        logs_layout.addWidget(self.log_status)
+        logs_layout.addWidget(self.log_output, 1)
+
+        device_tab = QWidget()
+        device_layout = QVBoxLayout(device_tab)
+        device_layout.setContentsMargins(0, 0, 0, 0)
+        device_layout.setSpacing(12)
+        device_layout.addWidget(self.device_info_status)
+        device_layout.addWidget(self.device_info_output, 1)
+
+        self.info_tabs = QTabWidget()
+        self.info_tabs.setDocumentMode(True)
+        self.info_tabs.setTabPosition(QTabWidget.North)
+        self.info_tabs.addTab(status_tab, "Status")
+        self.info_tabs.addTab(logs_tab, "Logs")
+        self.info_tabs.addTab(device_tab, "Device Info")
+
         right_layout.addWidget(header)
         right_layout.addWidget(subheader)
-        right_layout.addLayout(button_grid)
-        right_layout.addLayout(stat_grid)
-        right_layout.addWidget(self.log_status)
-        right_layout.addWidget(self.log_output)
-        right_layout.addWidget(self.device_info_status)
-        right_layout.addWidget(self.device_info_output, 1)
+        right_layout.addWidget(self.info_tabs, 1)
 
-        right_panel_scroll = QScrollArea()
-        right_panel_scroll.setWidgetResizable(True)
-        right_panel_scroll.setFrameShape(QFrame.NoFrame)
-        right_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        right_panel_scroll.setWidget(right_panel_content)
-        right_panel_scroll.setMinimumWidth(340)
-        right_panel_scroll.setMaximumWidth(480)
-        right_panel_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
-        self.right_panel_scroll = right_panel_scroll
+        splitter = QSplitter(Qt.Horizontal)
+        splitter.setChildrenCollapsible(False)
+        splitter.setHandleWidth(10)
+        splitter.addWidget(self.video_label)
+        splitter.addWidget(sidebar)
+        splitter.setStretchFactor(0, 5)
+        splitter.setStretchFactor(1, 3)
+        splitter.setSizes([1000, 420])
+        self.content_splitter = splitter
 
-        root_layout.addWidget(self.video_label, 1)
-        root_layout.addWidget(right_panel_scroll, 0)
-        root_layout.setStretch(0, 5)
-        root_layout.setStretch(1, 2)
+        root_layout.addWidget(splitter, 1)
         self.root_layout = root_layout
         self.setCentralWidget(root)
         self._install_shortcuts()
@@ -308,9 +333,26 @@ class HandViewerWindow(QMainWindow):
             #LogStatus {
                 color: #91a7b3;
             }
-            QScrollArea {
-                border: none;
+            #Sidebar {
                 background: transparent;
+            }
+            QTabWidget::pane {
+                border: 1px solid #2f414b;
+                border-radius: 18px;
+                background: #11181d;
+                padding: 12px;
+            }
+            QTabBar::tab {
+                background: #1b262c;
+                color: #b9c6ce;
+                border-top-left-radius: 12px;
+                border-top-right-radius: 12px;
+                padding: 10px 14px;
+                margin-right: 6px;
+            }
+            QTabBar::tab:selected {
+                background: #f2a14a;
+                color: #141414;
             }
             """
         )
@@ -548,13 +590,15 @@ class HandViewerWindow(QMainWindow):
 
     def _sync_fullscreen_layout(self) -> None:
         fullscreen = self.isFullScreen()
-        self.right_panel_scroll.setVisible(not fullscreen)
         if fullscreen:
             self.root_layout.setContentsMargins(10, 10, 10, 10)
             self.root_layout.setSpacing(10)
+            sidebar_width = min(420, max(self.width() // 3, 300))
+            self.content_splitter.setSizes([max(self.width() - sidebar_width, 320), sidebar_width])
         else:
             self.root_layout.setContentsMargins(24, 24, 24, 24)
-            self.root_layout.setSpacing(24)
+            self.root_layout.setSpacing(16)
+            self.content_splitter.setSizes([1000, 420])
 
     def _update_stats(self, packet: FramePacket, tracking: TrackingResult) -> None:
         self.source_card.set_value(packet.source_name)
