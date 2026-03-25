@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from .diagnostics import HardwareDiagnosticsMonitor
 from .device_sources import BaseFrameSource, FramePacket, open_best_source
 from .hand_tracking import HandTracker, TrackingResult
 from .mouse_control import AirMouseState, WindowsAirMouseController
@@ -76,11 +77,15 @@ class HandViewerWindow(QMainWindow):
         self._session_log_messages: list[str] = []
         self._log_file_path = self._build_log_file_path()
         self._last_frame_rgb: np.ndarray | None = None
+        self._diagnostics = HardwareDiagnosticsMonitor()
+        self._last_diagnostics_text = ""
+        self._latest_source_summary = "Waiting for a video source..."
 
         self.setWindowTitle("Luma Ultra Hand Viewer")
         self.resize(1560, 920)
         self._build_ui()
         self._flush_logs()
+        self._diagnostics.request_refresh(self._latest_source_summary, force=True)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
@@ -88,10 +93,14 @@ class HandViewerWindow(QMainWindow):
         self._log_timer = QTimer(self)
         self._log_timer.timeout.connect(self._flush_logs)
         self._log_timer.start(250)
+        self._diagnostics_timer = QTimer(self)
+        self._diagnostics_timer.timeout.connect(self._refresh_device_info)
+        self._diagnostics_timer.start(5000)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._timer.stop()
         self._log_timer.stop()
+        self._diagnostics_timer.stop()
         self._tracker.close()
         self._air_mouse.set_enabled(False)
         self._source.stop()
@@ -144,6 +153,10 @@ class HandViewerWindow(QMainWindow):
         self.copy_logs_button.clicked.connect(self._copy_logs)
         self.clear_logs_button = QPushButton("Clear logs")
         self.clear_logs_button.clicked.connect(self._clear_logs)
+        self.copy_device_info_button = QPushButton("Copy device info")
+        self.copy_device_info_button.clicked.connect(self._copy_device_info)
+        self.refresh_device_info_button = QPushButton("Refresh device info")
+        self.refresh_device_info_button.clicked.connect(self._refresh_device_info)
         self.air_mouse_button = QPushButton()
         self.air_mouse_button.clicked.connect(self._toggle_air_mouse)
         for button in (
@@ -152,13 +165,17 @@ class HandViewerWindow(QMainWindow):
             self.air_mouse_button,
             self.copy_logs_button,
             self.clear_logs_button,
+            self.copy_device_info_button,
+            self.refresh_device_info_button,
         ):
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         button_grid.addWidget(self.reconnect_button, 0, 0)
         button_grid.addWidget(self.reset_pose_button, 0, 1)
         button_grid.addWidget(self.air_mouse_button, 1, 0)
         button_grid.addWidget(self.copy_logs_button, 1, 1)
-        button_grid.addWidget(self.clear_logs_button, 2, 0, 1, 2)
+        button_grid.addWidget(self.clear_logs_button, 2, 0)
+        button_grid.addWidget(self.copy_device_info_button, 2, 1)
+        button_grid.addWidget(self.refresh_device_info_button, 3, 0, 1, 2)
 
         stat_grid = QGridLayout()
         stat_grid.setHorizontalSpacing(12)
@@ -180,18 +197,26 @@ class HandViewerWindow(QMainWindow):
 
         self.log_output = QPlainTextEdit()
         self.log_output.setReadOnly(True)
-        self.log_output.setMinimumHeight(260)
+        self.log_output.setMinimumHeight(180)
         self.log_output.setObjectName("LogPane")
         self.log_output.document().setMaximumBlockCount(300)
         self.log_status = QLabel("Logs are throttled and can be copied in one click.")
         self.log_status.setObjectName("LogStatus")
+        self.device_info_output = QPlainTextEdit()
+        self.device_info_output.setReadOnly(True)
+        self.device_info_output.setMinimumHeight(220)
+        self.device_info_output.setObjectName("LogPane")
+        self.device_info_status = QLabel("Device info updates automatically every few seconds.")
+        self.device_info_status.setObjectName("LogStatus")
 
         right_layout.addWidget(header)
         right_layout.addWidget(subheader)
         right_layout.addLayout(button_grid)
         right_layout.addLayout(stat_grid)
         right_layout.addWidget(self.log_status)
-        right_layout.addWidget(self.log_output, 1)
+        right_layout.addWidget(self.log_output)
+        right_layout.addWidget(self.device_info_status)
+        right_layout.addWidget(self.device_info_output, 1)
 
         right_panel_scroll = QScrollArea()
         right_panel_scroll.setWidgetResizable(True)
@@ -293,6 +318,7 @@ class HandViewerWindow(QMainWindow):
     def _reconnect_source(self) -> None:
         self._source.stop()
         self._source = open_best_source(self._sdk_root)
+        self._refresh_device_info()
         self._flush_logs()
 
     def _reset_pose(self) -> None:
@@ -304,6 +330,9 @@ class HandViewerWindow(QMainWindow):
         self._sync_air_mouse_button()
         self._flush_logs()
 
+    def _refresh_device_info(self) -> None:
+        self._diagnostics.request_refresh(self._latest_source_summary)
+
     def _refresh(self) -> None:
         packet = self._source.get_latest_packet()
         if packet is None:
@@ -312,6 +341,9 @@ class HandViewerWindow(QMainWindow):
             return
 
         self._last_packet_timestamp = packet.timestamp
+        self._latest_source_summary = (
+            f"{packet.source_name} | {packet.market_name} | {packet.width}x{packet.height}"
+        )
         tracking = self._tracker.process(packet.frame_bgr)
         self._air_mouse_state = self._air_mouse.update(tracking, packet.pose)
         decorated = self._decorate_frame(packet, tracking, self._air_mouse_state)
@@ -322,11 +354,13 @@ class HandViewerWindow(QMainWindow):
     def _flush_logs(self) -> None:
         messages = self._source.drain_logs()
         messages.extend(self._air_mouse.drain_logs())
+        messages.extend(self._diagnostics.drain_logs())
         if messages:
             self._append_session_logs(messages)
             self._pending_log_messages.extend(messages)
 
         if not self._pending_log_messages:
+            self._update_device_info_view()
             return
 
         scroll_bar = self.log_output.verticalScrollBar()
@@ -336,6 +370,7 @@ class HandViewerWindow(QMainWindow):
         if should_follow:
             scroll_bar.setValue(scroll_bar.maximum())
         self._update_log_status()
+        self._update_device_info_view()
 
     def _copy_logs(self) -> None:
         text = "\n".join(self._session_log_messages).strip()
@@ -357,6 +392,15 @@ class HandViewerWindow(QMainWindow):
         except OSError:
             pass
         self.log_status.setText("Logs cleared.")
+
+    def _copy_device_info(self) -> None:
+        text = self._diagnostics.format_snapshot().strip()
+        if not text:
+            self.device_info_status.setText("No device info yet.")
+            return
+
+        QApplication.clipboard().setText(text)
+        self.device_info_status.setText("Copied device info for this machine.")
 
     def _sync_air_mouse_button(self) -> None:
         self.air_mouse_button.setText("Air mouse on" if self._air_mouse.enabled else "Air mouse off")
@@ -380,6 +424,17 @@ class HandViewerWindow(QMainWindow):
     def _update_log_status(self) -> None:
         self.log_status.setText(
             f"{len(self._session_log_messages)} log lines this session. Copy logs grabs the full session."
+        )
+
+    def _update_device_info_view(self) -> None:
+        report = self._diagnostics.format_snapshot()
+        if report == self._last_diagnostics_text:
+            return
+
+        self._last_diagnostics_text = report
+        self.device_info_output.setPlainText(report)
+        self.device_info_status.setText(
+            "Copy device info and send it to me after testing on the laptop."
         )
 
     def _decorate_frame(
