@@ -140,8 +140,9 @@ class VitureCarinaSource(BaseFrameSource):
     def __init__(self, sdk_root: Path) -> None:
         super().__init__()
         self._sdk_root = sdk_root
-        self._bin_dir = sdk_root / "release" / "x86_64"
-        self._cache_dir = sdk_root / ".cache"
+        self._bin_dir = sdk_root / "x64"
+        local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        self._cache_dir = local_app_data / "LumaUltraHandViewer" / "cache" / "viture"
         self._cache_dir.mkdir(exist_ok=True)
 
         self._dll_directory: Optional[os.AddDllDirectory] = None

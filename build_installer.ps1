@@ -31,12 +31,12 @@ if (-not $SkipExeBuild) {
     & (Join-Path $repoRoot "build_exe.ps1")
 }
 
-$sourceDir = Join-Path $repoRoot "release\LumaUltraHandViewer"
+$sourceDir = Join-Path $repoRoot "artifacts\release\LumaUltraHandViewer"
 if (-not (Test-Path $sourceDir)) {
     throw "Packaged application not found at $sourceDir"
 }
 
-$outputDir = Join-Path $repoRoot "installer-output"
+$outputDir = Join-Path $repoRoot "artifacts\installer"
 if (Test-Path $outputDir) {
     cmd /c rmdir /s /q "$outputDir"
 }

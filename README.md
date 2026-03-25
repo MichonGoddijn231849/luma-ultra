@@ -21,9 +21,9 @@ If no VITURE device is detected, the app falls back to your default webcam so yo
 .\build_exe.ps1
 ```
 
-The packaged app is created at `release\LumaUltraHandViewer\LumaUltraHandViewer.exe`.
+The packaged app is created at `artifacts\release\LumaUltraHandViewer\LumaUltraHandViewer.exe`.
 
-Important: run the EXE from `release\...`, not from any `build\...` folder.
+Important: run the EXE from `artifacts\release\...`, not from any temporary build folder.
 
 ## Build Installer
 
@@ -31,7 +31,7 @@ Important: run the EXE from `release\...`, not from any `build\...` folder.
 .\build_installer.ps1
 ```
 
-The installer is created at `installer-output\LumaUltraHandViewer-Setup-<version>.exe`.
+The installer is created at `artifacts\installer\LumaUltraHandViewer-Setup-<version>.exe`.
 
 It installs the app into `Program Files`, adds a Start menu shortcut, optionally adds a desktop shortcut, and creates a normal Windows uninstall entry.
 
@@ -68,3 +68,4 @@ That script initializes git if needed, creates the GitHub repository, pushes `ma
 - The VITURE Windows SDK does not expose a public hand-tracking API in the native headers or DLL exports, so this app derives hand tracking from the camera feed rather than calling a built-in gesture API.
 - The app currently assumes the Carina camera callback delivers an 8-bit grayscale frame for each eye and uses the `left0` image as the tracking input.
 - Hardware-specific tuning may still be needed once you test with the glasses connected, especially around exposure, confidence thresholds, and whether the stereo frames need a different decode path.
+- Only the Windows runtime DLLs used by this app are kept under `vendor\viture\windows`; the unused Unity SDK and Windows SDK documentation were removed during cleanup.

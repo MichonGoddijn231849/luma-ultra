@@ -55,7 +55,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: LumaUltraHandViewer-Installer
-          path: installer-output/*.exe
+          path: artifacts/installer/*.exe
 
       - name: Attach installer to GitHub release
         if: github.ref_type == 'tag'
@@ -67,4 +67,4 @@ jobs:
           if ($LASTEXITCODE -ne 0) {
             gh release create "${{ github.ref_name }}" --generate-notes --title "Luma Ultra Hand Viewer ${{ github.ref_name }}"
           }
-          gh release upload "${{ github.ref_name }}" installer-output\*.exe --clobber
+          gh release upload "${{ github.ref_name }}" artifacts\installer\*.exe --clobber

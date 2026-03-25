@@ -334,7 +334,7 @@ def main() -> int:
     app.setFont(QFont("Segoe UI Variable Text", 10))
 
     app_root = get_app_root()
-    sdk_root = app_root / "VITURE_XR_Glasses_SDK_for_Windows_x86_64"
+    sdk_root = app_root / "vendor" / "viture" / "windows"
     window = HandViewerWindow(sdk_root=sdk_root)
     window.show()
     return app.exec()

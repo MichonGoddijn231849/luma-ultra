@@ -1,14 +1,15 @@
 $ErrorActionPreference = "Stop"
 
-$python = Join-Path $PSScriptRoot ".venv\Scripts\python.exe"
+$repoRoot = $PSScriptRoot
+$python = Join-Path $repoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) {
     py -3.13 -m venv .venv
 }
 
 & $python -m pip install --upgrade pip
-& $python -m pip install -r requirements.txt pyinstaller
+& $python -m pip install -r (Join-Path $repoRoot "requirements.txt") pyinstaller
 
-$env:PYTHONPATH = Join-Path $PSScriptRoot "src"
+$env:PYTHONPATH = Join-Path $repoRoot "src"
 
 $running = Get-Process -Name "LumaUltraHandViewer" -ErrorAction SilentlyContinue
 if ($running) {
@@ -36,8 +37,8 @@ function Remove-Tree {
     throw "Failed to remove path after retries: $PathToRemove"
 }
 
-$workPath = Join-Path $PSScriptRoot ".pyinstaller-build"
-$distPath = Join-Path $PSScriptRoot "release"
+$workPath = Join-Path $repoRoot "artifacts\.pyinstaller-build"
+$distPath = Join-Path $repoRoot "artifacts\release"
 
 Remove-Tree $workPath
 Remove-Tree $distPath
@@ -56,5 +57,5 @@ Remove-Tree $distPath
   --hidden-import PySide6.QtSvg `
   --hidden-import PySide6.QtOpenGLWidgets `
   --add-data "assets;assets" `
-  --add-data "VITURE_XR_Glasses_SDK_for_Windows_x86_64;VITURE_XR_Glasses_SDK_for_Windows_x86_64" `
+  --add-data "vendor;vendor" `
   src\run_app.py
