@@ -7,8 +7,8 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QFont, QImage, QPixmap
+from PySide6.QtCore import QEvent, QTimer, Qt
+from PySide6.QtGui import QFont, QImage, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QPlainTextEdit,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -74,6 +75,7 @@ class HandViewerWindow(QMainWindow):
         self._pending_log_messages: list[str] = []
         self._session_log_messages: list[str] = []
         self._log_file_path = self._build_log_file_path()
+        self._last_frame_rgb: np.ndarray | None = None
 
         self.setWindowTitle("Luma Ultra Hand Viewer")
         self.resize(1560, 920)
@@ -95,6 +97,16 @@ class HandViewerWindow(QMainWindow):
         self._source.stop()
         super().closeEvent(event)
 
+    def changeEvent(self, event) -> None:  # type: ignore[override]
+        if event.type() == QEvent.WindowStateChange:
+            self._sync_fullscreen_layout()
+        super().changeEvent(event)
+
+    def resizeEvent(self, event) -> None:  # type: ignore[override]
+        super().resizeEvent(event)
+        if self._last_frame_rgb is not None:
+            self._present_rgb_frame(self._last_frame_rgb)
+
     def _build_ui(self) -> None:
         root = QWidget()
         root_layout = QHBoxLayout(root)
@@ -103,12 +115,12 @@ class HandViewerWindow(QMainWindow):
 
         self.video_label = QLabel("Waiting for a video source...")
         self.video_label.setAlignment(Qt.AlignCenter)
-        self.video_label.setMinimumSize(980, 720)
+        self.video_label.setMinimumSize(420, 260)
         self.video_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.video_label.setObjectName("VideoSurface")
 
-        right_panel = QWidget()
-        right_layout = QVBoxLayout(right_panel)
+        right_panel_content = QWidget()
+        right_layout = QVBoxLayout(right_panel_content)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(18)
 
@@ -121,7 +133,9 @@ class HandViewerWindow(QMainWindow):
         subheader.setWordWrap(True)
         subheader.setObjectName("HeroCopy")
 
-        button_row = QHBoxLayout()
+        button_grid = QGridLayout()
+        button_grid.setHorizontalSpacing(10)
+        button_grid.setVerticalSpacing(10)
         self.reconnect_button = QPushButton("Reconnect source")
         self.reconnect_button.clicked.connect(self._reconnect_source)
         self.reset_pose_button = QPushButton("Reset pose")
@@ -132,11 +146,19 @@ class HandViewerWindow(QMainWindow):
         self.clear_logs_button.clicked.connect(self._clear_logs)
         self.air_mouse_button = QPushButton()
         self.air_mouse_button.clicked.connect(self._toggle_air_mouse)
-        button_row.addWidget(self.reconnect_button)
-        button_row.addWidget(self.reset_pose_button)
-        button_row.addWidget(self.air_mouse_button)
-        button_row.addWidget(self.copy_logs_button)
-        button_row.addWidget(self.clear_logs_button)
+        for button in (
+            self.reconnect_button,
+            self.reset_pose_button,
+            self.air_mouse_button,
+            self.copy_logs_button,
+            self.clear_logs_button,
+        ):
+            button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        button_grid.addWidget(self.reconnect_button, 0, 0)
+        button_grid.addWidget(self.reset_pose_button, 0, 1)
+        button_grid.addWidget(self.air_mouse_button, 1, 0)
+        button_grid.addWidget(self.copy_logs_button, 1, 1)
+        button_grid.addWidget(self.clear_logs_button, 2, 0, 1, 2)
 
         stat_grid = QGridLayout()
         stat_grid.setHorizontalSpacing(12)
@@ -166,16 +188,31 @@ class HandViewerWindow(QMainWindow):
 
         right_layout.addWidget(header)
         right_layout.addWidget(subheader)
-        right_layout.addLayout(button_row)
+        right_layout.addLayout(button_grid)
         right_layout.addLayout(stat_grid)
         right_layout.addWidget(self.log_status)
         right_layout.addWidget(self.log_output, 1)
 
+        right_panel_scroll = QScrollArea()
+        right_panel_scroll.setWidgetResizable(True)
+        right_panel_scroll.setFrameShape(QFrame.NoFrame)
+        right_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        right_panel_scroll.setWidget(right_panel_content)
+        right_panel_scroll.setMinimumWidth(340)
+        right_panel_scroll.setMaximumWidth(480)
+        right_panel_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.right_panel_scroll = right_panel_scroll
+
         root_layout.addWidget(self.video_label, 1)
-        root_layout.addWidget(right_panel, 0)
+        root_layout.addWidget(right_panel_scroll, 0)
+        root_layout.setStretch(0, 5)
+        root_layout.setStretch(1, 2)
+        self.root_layout = root_layout
         self.setCentralWidget(root)
+        self._install_shortcuts()
         self._apply_styles()
         self._sync_air_mouse_button()
+        self._sync_fullscreen_layout()
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
@@ -245,6 +282,10 @@ class HandViewerWindow(QMainWindow):
             }
             #LogStatus {
                 color: #91a7b3;
+            }
+            QScrollArea {
+                border: none;
+                background: transparent;
             }
             """
         )
@@ -423,11 +464,42 @@ class HandViewerWindow(QMainWindow):
 
     def _present_frame(self, frame_bgr: np.ndarray) -> None:
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        self._last_frame_rgb = frame_rgb.copy()
+        self._present_rgb_frame(frame_rgb)
+
+    def _present_rgb_frame(self, frame_rgb: np.ndarray) -> None:
         height, width = frame_rgb.shape[:2]
         image = QImage(frame_rgb.data, width, height, frame_rgb.strides[0], QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(image.copy())
         scaled = pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.video_label.setPixmap(scaled)
+
+    def _install_shortcuts(self) -> None:
+        toggle_fullscreen = QShortcut(QKeySequence("F11"), self)
+        toggle_fullscreen.activated.connect(self._toggle_fullscreen)
+        exit_fullscreen = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        exit_fullscreen.activated.connect(self._exit_fullscreen)
+        self._fullscreen_shortcuts = [toggle_fullscreen, exit_fullscreen]
+
+    def _toggle_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
+
+    def _exit_fullscreen(self) -> None:
+        if self.isFullScreen():
+            self.showNormal()
+
+    def _sync_fullscreen_layout(self) -> None:
+        fullscreen = self.isFullScreen()
+        self.right_panel_scroll.setVisible(not fullscreen)
+        if fullscreen:
+            self.root_layout.setContentsMargins(10, 10, 10, 10)
+            self.root_layout.setSpacing(10)
+        else:
+            self.root_layout.setContentsMargins(24, 24, 24, 24)
+            self.root_layout.setSpacing(24)
 
     def _update_stats(self, packet: FramePacket, tracking: TrackingResult) -> None:
         self.source_card.set_value(packet.source_name)

@@ -28,6 +28,7 @@ class TrackingResult:
     frame_bgr: np.ndarray
     hands: list[TrackedHand]
     fps: float
+    scene_motion_norm: tuple[float, float]
 
 
 def _get_model_path() -> Path:
@@ -60,8 +61,10 @@ class HandTracker:
         self._last_frame_timestamp_ms = 0
         self._last_primary_hand: TrackedHand | None = None
         self._last_primary_hand_time = 0.0
+        self._previous_motion_frame: np.ndarray | None = None
 
     def process(self, frame_bgr: np.ndarray) -> TrackingResult:
+        scene_motion_norm = self._estimate_scene_motion(frame_bgr)
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
         results = self._landmarker.detect_for_video(mp_image, self._next_timestamp_ms())
@@ -100,7 +103,12 @@ class HandTracker:
             self._last_primary_hand = None
 
         fps = self._tick_fps()
-        return TrackingResult(frame_bgr=annotated, hands=hands, fps=fps)
+        return TrackingResult(
+            frame_bgr=annotated,
+            hands=hands,
+            fps=fps,
+            scene_motion_norm=scene_motion_norm,
+        )
 
     def close(self) -> None:
         self._landmarker.close()
@@ -122,6 +130,23 @@ class HandTracker:
         )
         self._last_fps_timestamp = now
         return self._smoothed_fps
+
+    def _estimate_scene_motion(self, frame_bgr: np.ndarray) -> tuple[float, float]:
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+        motion_frame = cv2.resize(gray, (0, 0), fx=0.35, fy=0.35, interpolation=cv2.INTER_AREA)
+        motion_frame = motion_frame.astype(np.float32, copy=False)
+        if self._previous_motion_frame is None:
+            self._previous_motion_frame = motion_frame
+            return (0.0, 0.0)
+
+        shift, response = cv2.phaseCorrelate(self._previous_motion_frame, motion_frame)
+        self._previous_motion_frame = motion_frame
+        if not np.isfinite(shift[0]) or not np.isfinite(shift[1]) or response < 0.015:
+            return (0.0, 0.0)
+
+        width = max(motion_frame.shape[1], 1)
+        height = max(motion_frame.shape[0], 1)
+        return (float(shift[0]) / width, float(shift[1]) / height)
 
     def _stabilize_hand(self, hand: TrackedHand) -> TrackedHand:
         previous = self._last_primary_hand
