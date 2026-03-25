@@ -15,6 +15,8 @@ from typing import Optional
 import cv2
 import numpy as np
 
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 @dataclass(slots=True)
 class PoseSnapshot:
@@ -448,6 +450,7 @@ class VitureCarinaSource(BaseFrameSource):
             capture_output=True,
             text=True,
             check=False,
+            creationflags=_CREATE_NO_WINDOW,
         )
         if completed.returncode != 0 or not completed.stdout.strip():
             self.log("Unable to enumerate connected PnP devices for VITURE discovery.")

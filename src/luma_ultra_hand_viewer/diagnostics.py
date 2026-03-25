@@ -8,6 +8,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+_CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 _VID_PID_PATTERN = re.compile(r"VID_([0-9A-F]{4}).*PID_([0-9A-F]{4})", re.IGNORECASE)
 _DISPLAY_PRODUCT_PATTERN = re.compile(r"DISPLAY\\([^\\]+)\\", re.IGNORECASE)
@@ -199,6 +200,7 @@ $monitorParams = @(Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorBasi
                 text=True,
                 timeout=8,
                 check=False,
+                creationflags=_CREATE_NO_WINDOW,
             )
         except OSError as exc:
             self._logs.append(f"[{time.strftime('%H:%M:%S')}] Device probe failed to start: {exc}")

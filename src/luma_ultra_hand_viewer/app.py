@@ -28,6 +28,12 @@ from PySide6.QtWidgets import (
 from .diagnostics import HardwareDiagnosticsMonitor
 from .device_sources import BaseFrameSource, FramePacket, open_best_source
 from .hand_tracking import HandTracker, TrackingResult
+from .inair_integration import (
+    describe_inair_status,
+    launch_inair,
+    read_last_action_status,
+    request_elevated_admin_action,
+)
 from .mouse_control import AirMouseState, WindowsAirMouseController
 
 
@@ -81,6 +87,7 @@ class HandViewerWindow(QMainWindow):
         self._diagnostics = HardwareDiagnosticsMonitor()
         self._last_diagnostics_text = ""
         self._latest_source_summary = "Waiting for a video source..."
+        self._last_inair_status_text = ""
 
         self.setWindowTitle("Luma Ultra Hand Viewer")
         self.resize(1560, 920)
@@ -97,11 +104,15 @@ class HandViewerWindow(QMainWindow):
         self._diagnostics_timer = QTimer(self)
         self._diagnostics_timer.timeout.connect(self._refresh_device_info)
         self._diagnostics_timer.start(5000)
+        self._inair_timer = QTimer(self)
+        self._inair_timer.timeout.connect(self._refresh_inair_status)
+        self._inair_timer.start(4000)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._timer.stop()
         self._log_timer.stop()
         self._diagnostics_timer.stop()
+        self._inair_timer.stop()
         self._tracker.close()
         self._air_mouse.set_enabled(False)
         self._source.stop()
@@ -161,6 +172,16 @@ class HandViewerWindow(QMainWindow):
         self.copy_device_info_button.clicked.connect(self._copy_device_info)
         self.refresh_device_info_button = QPushButton("Refresh device info")
         self.refresh_device_info_button.clicked.connect(self._refresh_device_info)
+        self.patch_launch_inair_button = QPushButton("Patch + launch INAIR")
+        self.patch_launch_inair_button.clicked.connect(self._patch_and_launch_inair)
+        self.launch_inair_button = QPushButton("Launch INAIR")
+        self.launch_inair_button.clicked.connect(self._launch_inair)
+        self.restore_inair_button = QPushButton("Restore INAIR")
+        self.restore_inair_button.clicked.connect(self._restore_inair)
+        self.copy_inair_status_button = QPushButton("Copy INAIR status")
+        self.copy_inair_status_button.clicked.connect(self._copy_inair_status)
+        self.refresh_inair_button = QPushButton("Refresh INAIR")
+        self.refresh_inair_button.clicked.connect(self._refresh_inair_status)
         self.air_mouse_button = QPushButton()
         self.air_mouse_button.clicked.connect(self._toggle_air_mouse)
         for button in (
@@ -171,6 +192,11 @@ class HandViewerWindow(QMainWindow):
             self.clear_logs_button,
             self.copy_device_info_button,
             self.refresh_device_info_button,
+            self.patch_launch_inair_button,
+            self.launch_inair_button,
+            self.restore_inair_button,
+            self.copy_inair_status_button,
+            self.refresh_inair_button,
         ):
             button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         button_grid.addWidget(self.reconnect_button, 0, 0)
@@ -212,6 +238,14 @@ class HandViewerWindow(QMainWindow):
         self.device_info_output.setObjectName("LogPane")
         self.device_info_status = QLabel("Device info updates automatically every few seconds.")
         self.device_info_status.setObjectName("LogStatus")
+        self.inair_status_output = QPlainTextEdit()
+        self.inair_status_output.setReadOnly(True)
+        self.inair_status_output.setMinimumHeight(180)
+        self.inair_status_output.setObjectName("LogPane")
+        self.inair_status_label = QLabel(
+            "Patch + launch uses an elevated action because INAIR lives in Program Files."
+        )
+        self.inair_status_label.setObjectName("LogStatus")
 
         status_tab = QWidget()
         status_layout = QVBoxLayout(status_tab)
@@ -235,12 +269,29 @@ class HandViewerWindow(QMainWindow):
         device_layout.addWidget(self.device_info_status)
         device_layout.addWidget(self.device_info_output, 1)
 
+        inair_tab = QWidget()
+        inair_layout = QVBoxLayout(inair_tab)
+        inair_layout.setContentsMargins(0, 0, 0, 0)
+        inair_layout.setSpacing(12)
+        inair_button_grid = QGridLayout()
+        inair_button_grid.setHorizontalSpacing(10)
+        inair_button_grid.setVerticalSpacing(10)
+        inair_button_grid.addWidget(self.patch_launch_inair_button, 0, 0, 1, 2)
+        inair_button_grid.addWidget(self.launch_inair_button, 1, 0)
+        inair_button_grid.addWidget(self.restore_inair_button, 1, 1)
+        inair_button_grid.addWidget(self.copy_inair_status_button, 2, 0)
+        inair_button_grid.addWidget(self.refresh_inair_button, 2, 1)
+        inair_layout.addLayout(inair_button_grid)
+        inair_layout.addWidget(self.inair_status_label)
+        inair_layout.addWidget(self.inair_status_output, 1)
+
         self.info_tabs = QTabWidget()
         self.info_tabs.setDocumentMode(True)
         self.info_tabs.setTabPosition(QTabWidget.North)
         self.info_tabs.addTab(status_tab, "Status")
         self.info_tabs.addTab(logs_tab, "Logs")
         self.info_tabs.addTab(device_tab, "Device Info")
+        self.info_tabs.addTab(inair_tab, "INAIR")
 
         right_layout.addWidget(header)
         right_layout.addWidget(subheader)
@@ -263,6 +314,7 @@ class HandViewerWindow(QMainWindow):
         self._apply_styles()
         self._sync_air_mouse_button()
         self._sync_fullscreen_layout()
+        self._refresh_inair_status()
 
     def _apply_styles(self) -> None:
         self.setStyleSheet(
@@ -444,6 +496,34 @@ class HandViewerWindow(QMainWindow):
         QApplication.clipboard().setText(text)
         self.device_info_status.setText("Copied device info for this machine.")
 
+    def _patch_and_launch_inair(self) -> None:
+        success, message = request_elevated_admin_action("patch-launch")
+        self.inair_status_label.setText(message)
+        if success:
+            self._refresh_inair_status()
+
+    def _launch_inair(self) -> None:
+        success, message = launch_inair()
+        self.inair_status_label.setText(message)
+        self._refresh_inair_status()
+        if success:
+            self._append_session_logs([f"[{time.strftime('%H:%M:%S')}] {message}"])
+
+    def _restore_inair(self) -> None:
+        success, message = request_elevated_admin_action("restore")
+        self.inair_status_label.setText(message)
+        if success:
+            self._refresh_inair_status()
+
+    def _copy_inair_status(self) -> None:
+        text = self.inair_status_output.toPlainText().strip()
+        if not text:
+            self.inair_status_label.setText("No INAIR status yet.")
+            return
+
+        QApplication.clipboard().setText(text)
+        self.inair_status_label.setText("Copied the INAIR integration status.")
+
     def _sync_air_mouse_button(self) -> None:
         self.air_mouse_button.setText("Air mouse on" if self._air_mouse.enabled else "Air mouse off")
 
@@ -478,6 +558,20 @@ class HandViewerWindow(QMainWindow):
         self.device_info_status.setText(
             "Copy device info and send it to me after testing on the laptop."
         )
+
+    def _refresh_inair_status(self) -> None:
+        report = describe_inair_status(get_app_root())
+        if report == self._last_inair_status_text:
+            last_action = read_last_action_status()
+            if last_action:
+                self.inair_status_label.setText(last_action.splitlines()[-1])
+            return
+
+        self._last_inair_status_text = report
+        self.inair_status_output.setPlainText(report)
+        last_action = read_last_action_status()
+        if last_action:
+            self.inair_status_label.setText(last_action.splitlines()[-1])
 
     def _decorate_frame(
         self,

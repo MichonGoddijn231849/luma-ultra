@@ -35,6 +35,16 @@ The installer is created at `artifacts\installer\LumaUltraHandViewer-Setup-<vers
 
 It installs the app into `Program Files`, adds a Start menu shortcut, optionally adds a desktop shortcut, and creates a normal Windows uninstall entry.
 
+## INAIR Tab
+
+The app now includes an `INAIR` tab that can:
+
+- launch the installed `INAIR Space` app,
+- patch the installed INAIR DLLs for VITURE compatibility and then launch it,
+- restore the latest backed-up original DLLs.
+
+Patch and restore actions require Windows elevation because `INAIR Space` is installed under `Program Files`.
+
 ## GitHub Release Downloads
 
 This repository includes a GitHub Actions workflow at `.github\workflows\release-installer.yml`.
