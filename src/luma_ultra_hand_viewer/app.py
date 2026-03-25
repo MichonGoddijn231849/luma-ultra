@@ -272,7 +272,7 @@ class HandViewerWindow(QMainWindow):
 
         self._last_packet_timestamp = packet.timestamp
         tracking = self._tracker.process(packet.frame_bgr)
-        self._air_mouse_state = self._air_mouse.update(tracking)
+        self._air_mouse_state = self._air_mouse.update(tracking, packet.pose)
         decorated = self._decorate_frame(packet, tracking, self._air_mouse_state)
         self._present_frame(decorated)
         self._update_stats(packet, tracking)
