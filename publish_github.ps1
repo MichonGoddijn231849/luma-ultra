@@ -37,7 +37,12 @@ if ($status) {
     & git -C $repoRoot commit -m "Initial release setup"
 }
 
-$remote = & git -C $repoRoot remote get-url origin 2>$null
+$remotes = & git -C $repoRoot remote
+$remote = if ($remotes -contains "origin") {
+    & git -C $repoRoot remote get-url origin
+} else {
+    $null
+}
 if (-not $remote) {
     & gh repo create $Repository "--$Visibility" --source $repoRoot --remote origin --push
 } else {
