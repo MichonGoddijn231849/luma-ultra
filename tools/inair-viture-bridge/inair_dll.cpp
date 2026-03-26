@@ -55,6 +55,12 @@ struct BridgeState
     int immersion_level = 0;
     bool started = false;
     bool logging_enabled = false;
+    bool have_pose_callback = false;
+    bool have_imu_callback = false;
+    double last_pose_callback_timestamp = 0.0;
+    double last_imu_callback_timestamp = 0.0;
+    std::array<float, kPoseBufferSize> last_pose = {};
+    std::array<float, 6> last_imu = {};
 };
 
 BridgeState g_state;
@@ -97,16 +103,40 @@ T LoadSymbol(HMODULE module, const char* name)
     return reinterpret_cast<T>(GetProcAddress(module, name));
 }
 
-void PoseCallback(const float* /*values*/, double /*timestamp*/)
+void PoseCallback(const float* values, double timestamp)
 {
+    if (!values)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_state.mutex);
+    for (int index = 0; index < kPoseBufferSize; ++index)
+    {
+        g_state.last_pose[index] = values[index];
+    }
+    g_state.last_pose_callback_timestamp = timestamp;
+    g_state.have_pose_callback = true;
 }
 
 void VsyncCallback(double /*timestamp*/)
 {
 }
 
-void ImuCallback(const float* /*values*/, double /*timestamp*/)
+void ImuCallback(const float* values, double timestamp)
 {
+    if (!values)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(g_state.mutex);
+    for (int index = 0; index < static_cast<int>(g_state.last_imu.size()); ++index)
+    {
+        g_state.last_imu[index] = values[index];
+    }
+    g_state.last_imu_callback_timestamp = timestamp;
+    g_state.have_imu_callback = true;
 }
 
 void CameraCallback(
@@ -233,6 +263,12 @@ bool StartProviderUnlocked()
         g_state.provider = provider;
         g_state.product_id = product_id;
         g_state.started = true;
+        g_state.have_pose_callback = false;
+        g_state.have_imu_callback = false;
+        g_state.last_pose_callback_timestamp = 0.0;
+        g_state.last_imu_callback_timestamp = 0.0;
+        g_state.last_pose.fill(0.0f);
+        g_state.last_imu.fill(0.0f);
         Log("Started VITURE bridge with product id 0x%04X.", product_id);
         return true;
     }
@@ -255,6 +291,17 @@ void StopProviderUnlocked()
     g_state.provider = nullptr;
     g_state.product_id = 0;
     g_state.started = false;
+    g_state.have_pose_callback = false;
+    g_state.have_imu_callback = false;
+    g_state.last_pose_callback_timestamp = 0.0;
+    g_state.last_imu_callback_timestamp = 0.0;
+    g_state.last_pose.fill(0.0f);
+    g_state.last_imu.fill(0.0f);
+}
+
+bool IsNonZeroQuaternion(const std::array<float, kPoseBufferSize>& pose)
+{
+    return pose[3] != 0.0f || pose[4] != 0.0f || pose[5] != 0.0f || pose[6] != 0.0f;
 }
 
 bool QueryPoseUnlocked(double prediction_seconds, std::array<float, kPoseBufferSize>& pose)
@@ -262,6 +309,12 @@ bool QueryPoseUnlocked(double prediction_seconds, std::array<float, kPoseBufferS
     if (!StartProviderUnlocked())
     {
         return false;
+    }
+
+    if (g_state.have_pose_callback && IsNonZeroQuaternion(g_state.last_pose))
+    {
+        pose = g_state.last_pose;
+        return true;
     }
 
     int status = 0;
@@ -350,11 +403,18 @@ __declspec(dllexport) void getIMU(float* imu, long long* ts)
     CopyQuaternionToInairFormat(pose, imu);
     if (ts)
     {
-        *ts = static_cast<long long>(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()
-            ).count()
-        );
+        if (g_state.have_pose_callback && g_state.last_pose_callback_timestamp > 0.0)
+        {
+            *ts = static_cast<long long>(g_state.last_pose_callback_timestamp * 1000.0);
+        }
+        else
+        {
+            *ts = static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()
+                ).count()
+            );
+        }
     }
 }
 

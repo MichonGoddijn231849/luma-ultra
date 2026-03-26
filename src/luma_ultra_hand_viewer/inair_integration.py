@@ -443,7 +443,7 @@ def read_inair_log_tail(max_lines: int = 12) -> str:
     return "\n".join(lines[-max_lines:])
 
 
-def probe_inair_bridge(sample_count: int = 8, sample_delay_seconds: float = 0.12) -> tuple[bool, str]:
+def probe_inair_bridge(sample_count: int = 12, sample_delay_seconds: float = 0.15) -> tuple[bool, str]:
     plugin_dir = INAIR_ROOT / INAIR_PLUGIN_RELATIVE_DIR
     plugin_path = plugin_dir / "inair_dll.dll"
     lines = [
@@ -487,6 +487,7 @@ def probe_inair_bridge(sample_count: int = 8, sample_delay_seconds: float = 0.12
             lines.append(f"GetGlassesVersion: {bridge.GetGlassesVersion()}")
             lines.append(f"GetImmersionLevel: {bridge.GetImmersionLevel()}")
             lines.append(f"Bridge time msec: {bridge.GetCurrentTimeMsec()}")
+            time.sleep(1.0)
 
             offset = (ctypes.c_float * 3)()
             bridge.getIMUOffset(offset)
