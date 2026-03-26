@@ -8,6 +8,8 @@
 LumaUltraHandViewer.spec
 tools/inair-patch-support/bin/
 tools/inair-patch-support/obj/
+tools/inair-viture-bridge/build/
+tools/inair-viture-bridge/cmake-probe/
 __pycache__/
 *.pyc
 *.pyo

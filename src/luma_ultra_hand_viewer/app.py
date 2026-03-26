@@ -243,7 +243,7 @@ class HandViewerWindow(QMainWindow):
         self.inair_status_output.setMinimumHeight(180)
         self.inair_status_output.setObjectName("LogPane")
         self.inair_status_label = QLabel(
-            "Patch + launch uses an elevated action because INAIR lives in Program Files."
+            "Patch + launch uses an elevated action because INAIR lives in Program Files. Copy INAIR status after testing on the laptop."
         )
         self.inair_status_label.setObjectName("LogStatus")
 

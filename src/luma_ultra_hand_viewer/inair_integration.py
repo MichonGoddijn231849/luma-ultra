@@ -13,18 +13,27 @@ from pathlib import Path
 
 INAIR_ROOT = Path(r"C:\Program Files\INAIR Space")
 INAIR_EXE = INAIR_ROOT / "INAIR Space.exe"
-PATCH_FILE_NAMES = (
-    "inair.api.core.dll",
-    "inair.api.dfu.dll",
-    "inair.api.pipeserver.dll",
-    "LumaUltra.InairPatchSupport.dll",
-)
-BACKUP_FILE_NAMES = (
-    "inair.api.core.dll",
-    "inair.api.dfu.dll",
-    "inair.api.pipeserver.dll",
+INAIR_PLUGIN_RELATIVE_DIR = Path("INAIRSpace") / "INAIR SpaceDesktop_Data" / "Plugins" / "x86_64"
+PATCH_ITEMS = (
+    {"asset": Path("inair.api.core.dll"), "install": Path("inair.api.core.dll"), "backup": True},
+    {"asset": Path("inair.api.dfu.dll"), "install": Path("inair.api.dfu.dll"), "backup": True},
+    {"asset": Path("inair.api.pipeserver.dll"), "install": Path("inair.api.pipeserver.dll"), "backup": True},
+    {"asset": Path("LumaUltra.InairPatchSupport.dll"), "install": Path("LumaUltra.InairPatchSupport.dll"), "backup": False},
+    {"asset": Path("unity-plugin") / "inair_dll.dll", "install": INAIR_PLUGIN_RELATIVE_DIR / "inair_dll.dll", "backup": True},
+    {"asset": Path("unity-plugin") / "glasses.dll", "install": INAIR_PLUGIN_RELATIVE_DIR / "glasses.dll", "backup": False},
+    {"asset": Path("unity-plugin") / "carina_vio.dll", "install": INAIR_PLUGIN_RELATIVE_DIR / "carina_vio.dll", "backup": False},
+    {"asset": Path("unity-plugin") / "glew32.dll", "install": INAIR_PLUGIN_RELATIVE_DIR / "glew32.dll", "backup": False},
+    {"asset": Path("unity-plugin") / "libusb-1.0.dll", "install": INAIR_PLUGIN_RELATIVE_DIR / "libusb-1.0.dll", "backup": False},
+    {"asset": Path("unity-plugin") / "opencv_world4100.dll", "install": INAIR_PLUGIN_RELATIVE_DIR / "opencv_world4100.dll", "backup": False},
 )
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _format_patch_item_label(item: dict[str, Path | bool]) -> str:
+    install_path = Path(item["install"])
+    if install_path.parent == Path("."):
+        return install_path.name
+    return str(install_path)
 
 
 def get_app_root() -> Path:
@@ -57,11 +66,11 @@ def get_patch_asset_dir(app_root: Path | None = None) -> Path:
 
 def patch_assets_present(app_root: Path | None = None) -> bool:
     patch_dir = get_patch_asset_dir(app_root)
-    return all((patch_dir / name).exists() for name in PATCH_FILE_NAMES)
+    return all((patch_dir / item["asset"]).exists() for item in PATCH_ITEMS)
 
 
 def inair_install_present() -> bool:
-    return INAIR_EXE.exists() and all((INAIR_ROOT / name).exists() for name in BACKUP_FILE_NAMES)
+    return INAIR_EXE.exists() and all((INAIR_ROOT / item["install"]).exists() for item in PATCH_ITEMS if item["backup"])
 
 
 def launch_inair() -> tuple[bool, str]:
@@ -86,10 +95,14 @@ def patch_inair_install(app_root: Path | None = None) -> tuple[bool, str]:
     backup_dir = get_backup_root() / time.strftime("%Y%m%d-%H%M%S")
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    for file_name in BACKUP_FILE_NAMES:
-        shutil.copy2(INAIR_ROOT / file_name, backup_dir / file_name)
-    for file_name in PATCH_FILE_NAMES:
-        shutil.copy2(patch_dir / file_name, INAIR_ROOT / file_name)
+    for item in PATCH_ITEMS:
+        install_path = INAIR_ROOT / item["install"]
+        install_path.parent.mkdir(parents=True, exist_ok=True)
+        if item["backup"]:
+            backup_path = backup_dir / item["install"]
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(install_path, backup_path)
+        shutil.copy2(patch_dir / item["asset"], install_path)
 
     return True, f"Patched INAIR Space and saved a backup to {backup_dir}"
 
@@ -101,12 +114,13 @@ def restore_inair_install() -> tuple[bool, str]:
     stop_running_inair()
     backups = sorted(get_backup_root().glob("*"), reverse=True)
     for candidate in backups:
-        if all((candidate / name).exists() for name in BACKUP_FILE_NAMES):
-            for file_name in BACKUP_FILE_NAMES:
-                shutil.copy2(candidate / file_name, INAIR_ROOT / file_name)
-            helper_path = INAIR_ROOT / "LumaUltra.InairPatchSupport.dll"
-            if helper_path.exists():
-                helper_path.unlink()
+        if all((candidate / item["install"]).exists() for item in PATCH_ITEMS if item["backup"]):
+            for item in PATCH_ITEMS:
+                install_path = INAIR_ROOT / item["install"]
+                if item["backup"]:
+                    shutil.copy2(candidate / item["install"], install_path)
+                elif install_path.exists():
+                    install_path.unlink()
             return True, f"Restored INAIR Space from backup {candidate}"
 
     return False, "No INAIR backup set was found to restore."
@@ -125,6 +139,9 @@ def describe_inair_status(app_root: Path | None = None) -> str:
         lines.append(f"Patch state: {state}")
     else:
         lines.append("Patch state: unavailable")
+    lines.append(f"Unity plugin target: {INAIR_ROOT / INAIR_PLUGIN_RELATIVE_DIR / 'inair_dll.dll'}")
+    lines.extend(["", "Patch files:"])
+    lines.extend(describe_patch_items(app_root))
 
     latest_backup = get_latest_backup_dir()
     lines.append(f"Latest backup: {latest_backup if latest_backup else 'None'}")
@@ -145,25 +162,45 @@ def describe_inair_status(app_root: Path | None = None) -> str:
 def get_patch_state(app_root: Path | None = None) -> str:
     patch_dir = get_patch_asset_dir(app_root)
     matches = 0
-    for file_name in PATCH_FILE_NAMES:
-        installed_path = INAIR_ROOT / file_name
-        patch_path = patch_dir / file_name
+    for item in PATCH_ITEMS:
+        installed_path = INAIR_ROOT / item["install"]
+        patch_path = patch_dir / item["asset"]
         if not installed_path.exists() or not patch_path.exists():
             return "unknown"
         if file_sha256(installed_path) == file_sha256(patch_path):
             matches += 1
 
-    if matches == len(PATCH_FILE_NAMES):
+    if matches == len(PATCH_ITEMS):
         return "patched"
     if matches == 0:
         return "unpatched"
     return "mixed"
 
 
+def describe_patch_items(app_root: Path | None = None) -> list[str]:
+    patch_dir = get_patch_asset_dir(app_root)
+    lines: list[str] = []
+    for item in PATCH_ITEMS:
+        installed_path = INAIR_ROOT / item["install"]
+        patch_path = patch_dir / item["asset"]
+        label = _format_patch_item_label(item)
+        if not patch_path.exists():
+            lines.append(f"- {label}: bundled asset missing")
+            continue
+        if not installed_path.exists():
+            lines.append(f"- {label}: installed file missing")
+            continue
+
+        state = "patched" if file_sha256(installed_path) == file_sha256(patch_path) else "different"
+        lines.append(f"- {label}: {state}")
+
+    return lines
+
+
 def get_latest_backup_dir() -> Path | None:
     backups = sorted(get_backup_root().glob("*"), reverse=True)
     for candidate in backups:
-        if all((candidate / name).exists() for name in BACKUP_FILE_NAMES):
+        if all((candidate / item["install"]).exists() for item in PATCH_ITEMS if item["backup"]):
             return candidate
     return None
 
