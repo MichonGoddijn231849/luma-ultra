@@ -33,6 +33,7 @@ from .inair_integration import (
     launch_inair,
     read_last_action_status,
     request_elevated_admin_action,
+    run_bridge_probe,
 )
 from .mouse_control import AirMouseState, WindowsAirMouseController
 
@@ -178,6 +179,8 @@ class HandViewerWindow(QMainWindow):
         self.launch_inair_button.clicked.connect(self._launch_inair)
         self.restore_inair_button = QPushButton("Restore INAIR")
         self.restore_inair_button.clicked.connect(self._restore_inair)
+        self.probe_inair_bridge_button = QPushButton("Probe tracking bridge")
+        self.probe_inair_bridge_button.clicked.connect(self._probe_inair_bridge)
         self.copy_inair_status_button = QPushButton("Copy INAIR status")
         self.copy_inair_status_button.clicked.connect(self._copy_inair_status)
         self.refresh_inair_button = QPushButton("Refresh INAIR")
@@ -279,8 +282,9 @@ class HandViewerWindow(QMainWindow):
         inair_button_grid.addWidget(self.patch_launch_inair_button, 0, 0, 1, 2)
         inair_button_grid.addWidget(self.launch_inair_button, 1, 0)
         inair_button_grid.addWidget(self.restore_inair_button, 1, 1)
-        inair_button_grid.addWidget(self.copy_inair_status_button, 2, 0)
-        inair_button_grid.addWidget(self.refresh_inair_button, 2, 1)
+        inair_button_grid.addWidget(self.probe_inair_bridge_button, 2, 0, 1, 2)
+        inair_button_grid.addWidget(self.copy_inair_status_button, 3, 0)
+        inair_button_grid.addWidget(self.refresh_inair_button, 3, 1)
         inair_layout.addLayout(inair_button_grid)
         inair_layout.addWidget(self.inair_status_label)
         inair_layout.addWidget(self.inair_status_output, 1)
@@ -514,6 +518,16 @@ class HandViewerWindow(QMainWindow):
         self.inair_status_label.setText(message)
         if success:
             self._refresh_inair_status()
+
+    def _probe_inair_bridge(self) -> None:
+        success, message = run_bridge_probe()
+        self.inair_status_label.setText(message)
+        self._refresh_inair_status()
+        self._append_session_logs([f"[{time.strftime('%H:%M:%S')}] {message}"])
+        if success:
+            self._append_session_logs(
+                [f"[{time.strftime('%H:%M:%S')}] INAIR bridge probe reported non-zero IMU samples."]
+            )
 
     def _copy_inair_status(self) -> None:
         text = self.inair_status_output.toPlainText().strip()

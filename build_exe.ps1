@@ -57,5 +57,6 @@ Remove-Tree $distPath
   --hidden-import PySide6.QtSvg `
   --hidden-import PySide6.QtOpenGLWidgets `
   --add-data "assets;assets" `
+  --add-data "VERSION;." `
   --add-data "vendor;vendor" `
   src\run_app.py
