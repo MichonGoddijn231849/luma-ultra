@@ -14,6 +14,7 @@ from pathlib import Path
 INAIR_ROOT = Path(r"C:\Program Files\INAIR Space")
 INAIR_EXE = INAIR_ROOT / "INAIR Space.exe"
 INAIR_PLUGIN_RELATIVE_DIR = Path("INAIRSpace") / "INAIR SpaceDesktop_Data" / "Plugins" / "x86_64"
+DEFAULT_VITURE_MODE_ID = 3
 PATCH_ITEMS = (
     {"asset": Path("inair.api.core.dll"), "install": Path("inair.api.core.dll"), "backup": True},
     {"asset": Path("inair.api.dfu.dll"), "install": Path("inair.api.dfu.dll"), "backup": True},
@@ -147,6 +148,7 @@ def describe_inair_status(app_root: Path | None = None) -> str:
     lines.append(f"Latest backup: {latest_backup if latest_backup else 'None'}")
     lines.append(f"State DB: {get_inair_state_db_path()}")
     lines.append(f"State DB status: {describe_inair_state_db()}")
+    lines.append(f"Preferred VITURE launch mode: {DEFAULT_VITURE_MODE_ID}")
 
     last_action = read_last_action_status()
     if last_action:
@@ -331,11 +333,8 @@ def ensure_inair_state_db() -> None:
             "INSERT OR IGNORE INTO GlobalMode (Name, Value) VALUES (?, ?)",
             (("IsAutoAdjust", 1), ("IsPrivacy", 0), ("IsOverease", 0)),
         )
-        cursor.execute("SELECT COUNT(*) FROM MonitorLayout WHERE IsDefault = 1")
-        default_count = int(cursor.fetchone()[0] or 0)
-        if default_count == 0:
-            cursor.execute("UPDATE MonitorLayout SET IsDefault = 0")
-            cursor.execute("UPDATE MonitorLayout SET IsDefault = 1 WHERE ModeID = 3")
+        cursor.execute("UPDATE MonitorLayout SET Distance = 60 WHERE Distance IS NULL OR Distance < 30 OR Distance > 90")
+        cursor.execute("UPDATE MonitorLayout SET IsDefault = CASE WHEN ModeID = ? THEN 1 ELSE 0 END", (DEFAULT_VITURE_MODE_ID,))
         connection.commit()
 
 
@@ -357,7 +356,10 @@ def describe_inair_state_db() -> str:
         return f"error: {exc}"
 
     default_mode = row[0] if row else "none"
-    return f"{monitor_rows} monitor rows, {global_rows} global rows, default mode {default_mode}"
+    return (
+        f"{monitor_rows} monitor rows, {global_rows} global rows, default mode {default_mode}, "
+        f"preferred mode {DEFAULT_VITURE_MODE_ID}"
+    )
 
 
 def get_inair_log_path() -> Path:
