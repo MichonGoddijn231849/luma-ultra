@@ -70,6 +70,19 @@ def get_patch_asset_dir(app_root: Path | None = None) -> Path:
     return root / "vendor" / "inair" / "patches"
 
 
+def get_viture_config_path() -> Path | None:
+    candidates = (
+        Path(r"C:\Program Files\VITURE\SpaceWalker\config.yaml"),
+        Path(r"C:\Program Files\VITURE\SpaceWalker\custom_config.yaml"),
+        INAIR_ROOT / INAIR_PLUGIN_RELATIVE_DIR / "config.yaml",
+        INAIR_ROOT / INAIR_PLUGIN_RELATIVE_DIR / "custom_config.yaml",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def get_app_version(app_root: Path | None = None) -> str:
     root = app_root or get_app_root()
     candidates = (
@@ -171,6 +184,7 @@ def describe_inair_status(app_root: Path | None = None) -> str:
     lines.append(f"State DB: {get_inair_state_db_path()}")
     lines.append(f"State DB status: {describe_inair_state_db()}")
     lines.append(f"Preferred VITURE launch mode: {DEFAULT_VITURE_MODE_ID}")
+    lines.append(f"VITURE config path: {get_viture_config_path() or 'not found'}")
 
     bridge_probe = read_bridge_probe_status()
     if bridge_probe:
@@ -449,6 +463,7 @@ def probe_inair_bridge(sample_count: int = 12, sample_delay_seconds: float = 0.1
     lines = [
         f"Bridge probe at {time.strftime('%Y-%m-%d %H:%M:%S')}",
         f"Plugin path: {plugin_path}",
+        f"Config path: {get_viture_config_path() or 'not found'}",
     ]
 
     if not plugin_path.exists():

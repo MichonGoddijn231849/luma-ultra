@@ -19,6 +19,8 @@ using InitializeProviderFn = int (*)(void*, const char*, const char*);
 using StartProviderFn = int (*)(void*);
 using StopProviderFn = int (*)(void*);
 using ShutdownProviderFn = int (*)(void*);
+using OpenImuFn = int (*)(void*);
+using CloseImuFn = int (*)(void*);
 using IsProductValidFn = bool (*)(int);
 using RegisterCallbacksFn = int (*)(void*, void*, void*, void*, void*);
 using GetPoseFn = int (*)(void*, float*, double, int*);
@@ -38,6 +40,8 @@ struct VitureApi
     StartProviderFn start = nullptr;
     StopProviderFn stop = nullptr;
     ShutdownProviderFn shutdown = nullptr;
+    OpenImuFn open_imu = nullptr;
+    CloseImuFn close_imu = nullptr;
     IsProductValidFn is_product_valid = nullptr;
     RegisterCallbacksFn register_callbacks = nullptr;
     GetPoseFn get_pose = nullptr;
@@ -173,6 +177,8 @@ bool EnsureApiLoaded()
     g_state.api.start = LoadSymbol<StartProviderFn>(module, "xr_device_provider_start");
     g_state.api.stop = LoadSymbol<StopProviderFn>(module, "xr_device_provider_stop");
     g_state.api.shutdown = LoadSymbol<ShutdownProviderFn>(module, "xr_device_provider_shutdown");
+    g_state.api.open_imu = LoadSymbol<OpenImuFn>(module, "xr_device_provider_open_imu");
+    g_state.api.close_imu = LoadSymbol<CloseImuFn>(module, "xr_device_provider_close_imu");
     g_state.api.is_product_valid = LoadSymbol<IsProductValidFn>(module, "xr_device_provider_is_product_id_valid");
     g_state.api.register_callbacks = LoadSymbol<RegisterCallbacksFn>(module, "xr_device_provider_register_callbacks_carina");
     g_state.api.get_pose = LoadSymbol<GetPoseFn>(module, "xr_device_provider_get_gl_pose_carina");
@@ -181,7 +187,8 @@ bool EnsureApiLoaded()
     g_state.api.set_log_hook = LoadSymbol<SetLogHookFn>(module, "xr_device_provider_set_log_hook");
 
     const bool loaded = g_state.api.create && g_state.api.destroy && g_state.api.initialize && g_state.api.start &&
-        g_state.api.stop && g_state.api.shutdown && g_state.api.is_product_valid && g_state.api.register_callbacks &&
+        g_state.api.stop && g_state.api.shutdown && g_state.api.open_imu && g_state.api.close_imu &&
+        g_state.api.is_product_valid && g_state.api.register_callbacks &&
         g_state.api.get_pose && g_state.api.get_market_name && g_state.api.set_log_level && g_state.api.set_log_hook;
     return loaded;
 }
@@ -195,6 +202,26 @@ std::filesystem::path GetCacheDirectory()
     std::error_code ignored;
     std::filesystem::create_directories(cache_dir, ignored);
     return cache_dir;
+}
+
+std::filesystem::path GetConfigPath()
+{
+    const std::array<std::filesystem::path, 4> candidates = {
+        std::filesystem::path(L"C:\\Program Files\\VITURE\\SpaceWalker\\config.yaml"),
+        std::filesystem::path(L"C:\\Program Files\\VITURE\\SpaceWalker\\custom_config.yaml"),
+        GetModuleDirectory() / L"config.yaml",
+        GetModuleDirectory() / L"custom_config.yaml",
+    };
+
+    for (const auto& candidate : candidates)
+    {
+        if (std::filesystem::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+
+    return {};
 }
 
 std::vector<int> CandidateProductIds()
@@ -243,12 +270,27 @@ bool StartProviderUnlocked()
         }
 
         std::string cache = GetCacheDirectory().string();
-        int init_result = g_state.api.initialize(provider, nullptr, cache.c_str());
+        std::filesystem::path config_path = GetConfigPath();
+        std::string config = config_path.empty() ? std::string() : config_path.string();
+        int init_result = g_state.api.initialize(
+            provider,
+            config.empty() ? nullptr : config.c_str(),
+            cache.c_str()
+        );
         if (init_result != 0)
         {
             Log("Provider initialization failed for product 0x%04X with code %d.", product_id, init_result);
             g_state.api.destroy(provider);
             continue;
+        }
+
+        if (!config.empty())
+        {
+            Log("Initialized VITURE bridge with config path: %s", config.c_str());
+        }
+        else
+        {
+            Log("Initialized VITURE bridge without an external config path.");
         }
 
         int start_result = g_state.api.start(provider);
@@ -259,6 +301,9 @@ bool StartProviderUnlocked()
             g_state.api.destroy(provider);
             continue;
         }
+
+        const int imu_result = g_state.api.open_imu(provider);
+        Log("open_imu result for product 0x%04X: %d.", product_id, imu_result);
 
         g_state.provider = provider;
         g_state.product_id = product_id;
@@ -285,6 +330,7 @@ void StopProviderUnlocked()
         return;
     }
 
+    g_state.api.close_imu(g_state.provider);
     g_state.api.stop(g_state.provider);
     g_state.api.shutdown(g_state.provider);
     g_state.api.destroy(g_state.provider);
